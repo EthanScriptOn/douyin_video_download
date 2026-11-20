@@ -50,7 +50,14 @@ def data_dir() -> Path:
         if sys.platform == "darwin":
             base = Path.home() / "Library" / "Application Support" / "DouyinMediaHelper"
         elif sys.platform == "win32":
-            base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")) / "DouyinMediaHelper"
+            # Prefer a user-visible folder. Avoid Session-0 systemprofile
+            # (prlctl/service launches), where Explorer/startfile won't show UI.
+            home = Path(os.environ.get("USERPROFILE") or Path.home())
+            if "systemprofile" in str(home).lower():
+                home = Path(os.environ.get("PUBLIC") or r"C:\Users\Public")
+                base = home / "DouyinMediaHelper"
+            else:
+                base = home / "Videos" / "DouyinMediaHelper"
         else:
             base = Path.home() / ".local" / "share" / "DouyinMediaHelper"
         base.mkdir(parents=True, exist_ok=True)
@@ -176,9 +183,17 @@ def open_local_file(path: Path) -> Path:
         subprocess.run(["open", "-R", str(resolved)], check=False)
         subprocess.run(["open", str(resolved)], check=False)
     elif sys.platform == "win32":
-        # Reveal in Explorer, then open with the default player.
-        subprocess.run(["explorer", f"/select,{resolved}"], check=False)
-        os.startfile(str(resolved))  # type: ignore[attr-defined]
+        # Reveal in Explorer; then open with default app.
+        # Use shell form so paths with spaces work; startfile may be silent in Session 0.
+        subprocess.run(
+            f'explorer /select,"{resolved}"',
+            shell=True,
+            check=False,
+        )
+        try:
+            os.startfile(str(resolved))  # type: ignore[attr-defined]
+        except OSError:
+            subprocess.run(["cmd", "/c", "start", "", str(resolved)], check=False)
     else:
         subprocess.run(["xdg-open", str(resolved)], check=False)
     return resolved
@@ -190,7 +205,10 @@ def open_downloads_dir() -> Path:
     if sys.platform == "darwin":
         subprocess.run(["open", str(resolved)], check=False)
     elif sys.platform == "win32":
-        os.startfile(str(resolved))  # type: ignore[attr-defined]
+        try:
+            os.startfile(str(resolved))  # type: ignore[attr-defined]
+        except OSError:
+            subprocess.run(["cmd", "/c", "start", "", str(resolved)], check=False)
     else:
         subprocess.run(["xdg-open", str(resolved)], check=False)
     return resolved

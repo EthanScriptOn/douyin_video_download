@@ -106,8 +106,8 @@ async function refresh() {
         status.textContent = "正在打开…";
         const r = await chrome.runtime.sendMessage({ type: "open_output", path });
         status.innerHTML = r?.ok
-          ? `<span class="ok">已在 Finder / 播放器打开</span>`
-          : `<span class="bad">${r?.error || "打开失败（助手是否在运行？）"}</span>`;
+          ? `<span class="ok">已请求打开（看资源管理器 / 播放器）</span>`
+          : `<span class="bad">${r?.error || "打开失败（助手是否在运行？可先点复制路径）"}</span>`;
       });
     });
 
