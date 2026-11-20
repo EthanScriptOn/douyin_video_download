@@ -1,0 +1,34 @@
+#!/bin/zsh
+set -euo pipefail
+
+# Resolve repo root: .../macos/DouyinMediaHelper.app/Contents/MacOS -> repo
+ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
+cd "$ROOT"
+PORT=18767
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  osascript -e 'display alert "缺少 ffmpeg" message "请先安装: brew install ffmpeg"'
+  exit 1
+fi
+
+if [ ! -d .venv ]; then
+  /usr/bin/osascript -e 'display alert "尚未初始化" message "请先双击 macos/start.command 完成依赖安装。"'
+  exit 1
+fi
+
+# Free stale listener from previous run.
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  lsof -tiTCP:"$PORT" -sTCP:LISTEN | while read -r pid; do
+    kill "$pid" 2>/dev/null || true
+  done
+  sleep 0.3
+  if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    lsof -tiTCP:"$PORT" -sTCP:LISTEN | while read -r pid; do
+      kill -9 "$pid" 2>/dev/null || true
+    done
+    sleep 0.2
+  fi
+fi
+
+export PYTHONUNBUFFERED=1
+exec "$ROOT/.venv/bin/python" -m helper.macos_app

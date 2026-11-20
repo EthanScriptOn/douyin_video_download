@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Local HTTP helper: ingest Douyin media URLs, stitch, open files.
+
+@author Codex
+@date 2026-11-20
+@comment localhost-only download/ffmpeg service for the Chrome extension.
+"""
+
+from __future__ import annotations
+
+import json
+import ssl
+import subprocess
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Callable, Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+HOST = "127.0.0.1"
+DEFAULT_PORT = 18767
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / "downloads"
+OUT.mkdir(parents=True, exist_ok=True)
+
+_SSL_CTX = ssl._create_unverified_context()
+
+
+def download(url: str, dest: Path) -> int:
+    req = Request(
+        url,
+        headers={
+            "Referer": "https://www.douyin.com/",
+            "Origin": "https://www.douyin.com",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/157.0.0.0 Safari/537.36"
+            ),
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(req, timeout=180, context=_SSL_CTX) as resp:
+            data = resp.read()
+    except HTTPError as exc:
+        raise RuntimeError(f"HTTP {exc.code} downloading CDN object") from exc
+    except URLError as exc:
+        raise RuntimeError(f"CDN download failed: {exc.reason!r}") from exc
+    if len(data) < 2048:
+        raise RuntimeError(f"CDN object too small ({len(data)} bytes); URL may have expired")
+    dest.write_bytes(data)
+    return len(data)
+
+
+def stitch(video: Path, audio: Path, out: Path) -> None:
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video),
+        "-i",
+        str(audio),
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0?",
+        "-c",
+        "copy",
+        "-shortest",
+        str(out),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr[-1500:] if proc.stderr else "ffmpeg failed")
+
+
+def open_local_file(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    out_root = OUT.resolve()
+    if out_root not in resolved.parents and resolved != out_root:
+        raise PermissionError("path outside download folder")
+    if not resolved.is_file():
+        raise FileNotFoundError(f"file not found: {resolved}")
+    subprocess.run(["open", "-R", str(resolved)], check=False)
+    subprocess.run(["open", str(resolved)], check=False)
+    return resolved
+
+
+class HelperHandler(BaseHTTPRequestHandler):
+    event_hook: Optional[Callable[[str, dict[str, Any]], None]] = None
+
+    def _cors(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS, GET")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def _read_json(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        return json.loads(raw.decode("utf-8"))
+
+    def _json(self, code: int, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self._cors()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _emit(self, event: str, payload: dict[str, Any]) -> None:
+        hook = self.event_hook
+        if hook:
+            try:
+                hook(event, payload)
+            except Exception:
+                pass
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path.rstrip("/") == "/health":
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "out_dir": str(OUT),
+                    "host": HOST,
+                },
+            )
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = self.path.rstrip("/")
+        try:
+            payload = self._read_json()
+        except Exception:
+            self._json(400, {"ok": False, "error": "bad json"})
+            return
+
+        if path == "/open":
+            try:
+                opened = open_local_file(Path(str(payload.get("path") or "")))
+                self._emit("open", {"path": str(opened)})
+                self._json(200, {"ok": True, "path": str(opened)})
+            except Exception as exc:
+                self._json(500, {"ok": False, "error": str(exc)})
+            return
+
+        if path != "/ingest":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        video_url = payload.get("video_url") or ""
+        audio_url = payload.get("audio_url") or ""
+        if not video_url or not audio_url:
+            self._json(400, {"ok": False, "error": "need video_url and audio_url"})
+            return
+
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        video_path = OUT / f"video_{stamp}.mp4"
+        audio_path = OUT / f"audio_{stamp}.mp4"
+        out_path = OUT / f"stitched_{stamp}.mp4"
+        self._emit("ingest_start", {"key": payload.get("key"), "page_url": payload.get("page_url")})
+        try:
+            vb = download(video_url, video_path)
+            ab = download(audio_url, audio_path)
+            stitch(video_path, audio_path, out_path)
+            result = {
+                "ok": True,
+                "video_bytes": vb,
+                "audio_bytes": ab,
+                "output": str(out_path),
+                "output_bytes": out_path.stat().st_size,
+            }
+            print(f"[ingest] ok -> {out_path} ({result['output_bytes']} bytes)", flush=True)
+            self._emit("ingest_ok", result)
+            self._json(200, result)
+        except Exception as exc:
+            print(f"[ingest] fail: {exc}", flush=True)
+            self._emit("ingest_fail", {"error": str(exc)})
+            self._json(500, {"ok": False, "error": str(exc)})
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        print("%s - %s" % (self.address_string(), fmt % args), flush=True)
+
+
+class HelperServer:
+    def __init__(self, port: int = DEFAULT_PORT, on_event: Optional[Callable[[str, dict[str, Any]], None]] = None):
+        self.port = port
+        self.on_event = on_event
+        self._httpd: Optional[ThreadingHTTPServer] = None
+        self._thread: Optional[threading.Thread] = None
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{HOST}:{self.port}"
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        Handler = type(
+            "BoundHelperHandler",
+            (HelperHandler,),
+            {"event_hook": staticmethod(self.on_event) if self.on_event else None},
+        )
+        try:
+            self._httpd = ThreadingHTTPServer((HOST, self.port), Handler)
+        except OSError as exc:
+            raise SystemExit(
+                f"无法监听 {HOST}:{self.port}（{exc}）。"
+                "通常是旧助手还在运行：再双击一次 start.command，"
+                "或执行: lsof -tiTCP:18767 | xargs kill"
+            ) from exc
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+        print(f"listening {self.base_url}  out={OUT}", flush=True)
+
+    def stop(self) -> None:
+        if self._httpd:
+            self._httpd.shutdown()
+            self._httpd.server_close()
+            self._httpd = None
+
+
+def serve_forever(port: int = DEFAULT_PORT) -> None:
+    server = HelperServer(port=port)
+    server.start()
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        server.stop()
+
+
+if __name__ == "__main__":
+    serve_forever()

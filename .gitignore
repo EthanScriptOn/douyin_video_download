@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.mp4
+downloads/*
+!downloads/.gitkeep
+helper/assets/AppIcon.iconset/

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>抖音媒体拦截</title>
+    <style>
+      body {
+        font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 12px;
+        width: 400px;
+        color: #111;
+        background: #fff;
+      }
+      h1 { font-size: 14px; margin: 0 0 6px; }
+      .meta { color: #64748b; margin-bottom: 10px; }
+      .row { display: flex; gap: 8px; margin-bottom: 10px; }
+      button {
+        padding: 6px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #f8fafc;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+      #status { margin-bottom: 8px; min-height: 1.2em; word-break: break-all; }
+      .card {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 10px;
+        margin-bottom: 8px;
+        background: #fafafa;
+      }
+      .card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .title { font-weight: 600; font-size: 13px; }
+      .badge {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      .badge.ready { background: #dcfce7; color: #166534; }
+      .badge.missing { background: #fee2e2; color: #991b1b; }
+      .badge.done { background: #e0e7ff; color: #3730a3; }
+      .badge.pushing { background: #ffedd5; color: #9a3412; }
+      .badge.error { background: #fee2e2; color: #991b1b; }
+      .tracks { display: flex; gap: 10px; margin: 6px 0; color: #334155; }
+      .track.ok::before { content: "✓ "; color: #16a34a; }
+      .track.no::before { content: "✗ "; color: #dc2626; }
+      .page { color: #64748b; font-size: 11px; word-break: break-all; margin-bottom: 8px; }
+      .path {
+        font-size: 11px;
+        color: #334155;
+        word-break: break-all;
+        margin: 6px 0;
+        padding: 6px 8px;
+        background: #fff;
+        border: 1px dashed #cbd5e1;
+        border-radius: 6px;
+      }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      .ok { color: #15803d; }
+      .bad { color: #b91c1c; }
+      .empty { color: #64748b; padding: 12px 0; }
+    </style>
+  </head>
+  <body>
+      <h1>抖音媒体拦截 <span style="font-weight:500;color:#64748b">v0.3.1</span></h1>
+    <div class="meta" id="meta">加载中…</div>
+    <div class="row">
+      <button class="primary" id="pushLatest" style="flex: 1">推送最近可推视频</button>
+      <button id="clear">清空</button>
+    </div>
+    <div id="status"></div>
+    <div id="list"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>
