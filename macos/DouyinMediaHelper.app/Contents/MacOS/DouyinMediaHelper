@@ -6,13 +6,8 @@ ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 cd "$ROOT"
 PORT=18767
 
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  osascript -e 'display alert "缺少 ffmpeg" message "请先安装: brew install ffmpeg"'
-  exit 1
-fi
-
 if [ ! -d .venv ]; then
-  /usr/bin/osascript -e 'display alert "尚未初始化" message "请先双击 macos/start.command 完成依赖安装。"'
+  /usr/bin/osascript -e 'display alert "尚未初始化" message "请先双击 macos/start.command 完成依赖安装。用户请使用打包版 DouyinMediaHelper.app。"'
   exit 1
 fi
 

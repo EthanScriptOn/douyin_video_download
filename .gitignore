@@ -6,3 +6,5 @@ __pycache__/
 downloads/*
 !downloads/.gitkeep
 helper/assets/AppIcon.iconset/
+build/
+dist/

@@ -9,8 +9,12 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
 import ssl
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,11 +25,95 @@ from urllib.request import Request, urlopen
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 18767
-ROOT = Path(__file__).resolve().parents[1]
+
+_SSL_CTX = ssl._create_unverified_context()
+_FFMPEG_BIN: Optional[str] = None
+
+
+def is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def bundle_dir() -> Path:
+    """Directory with bundled resources (PyInstaller _MEIPASS or package root)."""
+    if is_frozen():
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def data_dir() -> Path:
+    """Writable data root for downloads / config."""
+    if is_frozen():
+        if sys.platform == "darwin":
+            base = Path.home() / "Library" / "Application Support" / "DouyinMediaHelper"
+        elif sys.platform == "win32":
+            base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")) / "DouyinMediaHelper"
+        else:
+            base = Path.home() / ".local" / "share" / "DouyinMediaHelper"
+        base.mkdir(parents=True, exist_ok=True)
+        return base
+    return Path(__file__).resolve().parents[1]
+
+
+ROOT = data_dir()
 OUT = ROOT / "downloads"
 OUT.mkdir(parents=True, exist_ok=True)
 
-_SSL_CTX = ssl._create_unverified_context()
+
+def find_ffmpeg() -> str:
+    """Resolve ffmpeg.
+
+    Frozen (.app/.exe): prefer bundled / imageio-ffmpeg so users need no PATH setup.
+    Dev mode: prefer env → PATH → imageio-ffmpeg.
+    """
+    global _FFMPEG_BIN
+    if _FFMPEG_BIN:
+        return _FFMPEG_BIN
+
+    env = os.environ.get("FFMPEG_BINARY") or os.environ.get("FFMPEG_PATH")
+    if env and Path(env).is_file():
+        _FFMPEG_BIN = env
+        return _FFMPEG_BIN
+
+    def _from_imageio() -> Optional[str]:
+        try:
+            import imageio_ffmpeg
+
+            path = imageio_ffmpeg.get_ffmpeg_exe()
+            return path if path and Path(path).is_file() else None
+        except Exception:
+            return None
+
+    bundled = bundle_dir() / "ffmpeg"
+    if is_frozen():
+        if bundled.is_file():
+            _FFMPEG_BIN = str(bundled)
+            return _FFMPEG_BIN
+        bundled_iio = _from_imageio()
+        if bundled_iio:
+            _FFMPEG_BIN = bundled_iio
+            return _FFMPEG_BIN
+
+    which = shutil.which("ffmpeg")
+    if which:
+        _FFMPEG_BIN = which
+        return _FFMPEG_BIN
+
+    if bundled.is_file():
+        _FFMPEG_BIN = str(bundled)
+        return _FFMPEG_BIN
+
+    bundled_iio = _from_imageio()
+    if bundled_iio:
+        _FFMPEG_BIN = bundled_iio
+        return _FFMPEG_BIN
+
+    raise RuntimeError(
+        "未找到 ffmpeg。请安装 ffmpeg 并加入 PATH，或使用官方打包版助手。"
+    )
 
 
 def download(url: str, dest: Path) -> int:
@@ -57,7 +145,7 @@ def download(url: str, dest: Path) -> int:
 
 def stitch(video: Path, audio: Path, out: Path) -> None:
     cmd = [
-        "ffmpeg",
+        find_ffmpeg(),
         "-y",
         "-i",
         str(video),
@@ -84,9 +172,65 @@ def open_local_file(path: Path) -> Path:
         raise PermissionError("path outside download folder")
     if not resolved.is_file():
         raise FileNotFoundError(f"file not found: {resolved}")
-    subprocess.run(["open", "-R", str(resolved)], check=False)
-    subprocess.run(["open", str(resolved)], check=False)
+    if sys.platform == "darwin":
+        subprocess.run(["open", "-R", str(resolved)], check=False)
+        subprocess.run(["open", str(resolved)], check=False)
+    elif sys.platform == "win32":
+        # Reveal in Explorer, then open with the default player.
+        subprocess.run(["explorer", f"/select,{resolved}"], check=False)
+        os.startfile(str(resolved))  # type: ignore[attr-defined]
+    else:
+        subprocess.run(["xdg-open", str(resolved)], check=False)
     return resolved
+
+
+def open_downloads_dir() -> Path:
+    OUT.mkdir(parents=True, exist_ok=True)
+    resolved = OUT.resolve()
+    if sys.platform == "darwin":
+        subprocess.run(["open", str(resolved)], check=False)
+    elif sys.platform == "win32":
+        os.startfile(str(resolved))  # type: ignore[attr-defined]
+    else:
+        subprocess.run(["xdg-open", str(resolved)], check=False)
+    return resolved
+
+
+def free_port(port: int = DEFAULT_PORT) -> None:
+    """Best-effort: kill whatever is already listening on the helper port."""
+    if sys.platform == "darwin" or sys.platform.startswith("linux"):
+        try:
+            out = subprocess.check_output(
+                ["lsof", f"-tiTCP:{port}", "-sTCP:LISTEN"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return
+        for pid in {p.strip() for p in out.splitlines() if p.strip()}:
+            subprocess.run(["kill", pid], check=False)
+            time.sleep(0.2)
+            subprocess.run(["kill", "-9", pid], check=False)
+        return
+
+    if sys.platform == "win32":
+        try:
+            out = subprocess.check_output(["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return
+        # Match "127.0.0.1:18767" / "0.0.0.0:18767" / "[::]:18767", not 187670.
+        pat = re.compile(rf"[:\]]{port}\s")
+        pids: set[str] = set()
+        for line in out.splitlines():
+            if "LISTENING" not in line.upper() or not pat.search(line + " "):
+                continue
+            parts = line.split()
+            if parts:
+                pids.add(parts[-1])
+        for pid in pids:
+            if pid.isdigit() and pid != "0":
+                subprocess.run(["taskkill", "/F", "/PID", pid], check=False, capture_output=True)
+        return
 
 
 class HelperHandler(BaseHTTPRequestHandler):
@@ -126,12 +270,19 @@ class HelperHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path.rstrip("/") == "/health":
+            try:
+                ffmpeg = find_ffmpeg()
+            except Exception as exc:
+                self._json(500, {"ok": False, "error": str(exc)})
+                return
             self._json(
                 200,
                 {
                     "ok": True,
                     "out_dir": str(OUT),
                     "host": HOST,
+                    "frozen": is_frozen(),
+                    "ffmpeg": ffmpeg,
                 },
             )
             return
@@ -216,10 +367,13 @@ class HelperServer:
         try:
             self._httpd = ThreadingHTTPServer((HOST, self.port), Handler)
         except OSError as exc:
+            hint = (
+                "再双击一次 windows\\start.bat"
+                if sys.platform == "win32"
+                else "再双击一次 macos/start.command"
+            )
             raise SystemExit(
-                f"无法监听 {HOST}:{self.port}（{exc}）。"
-                "通常是旧助手还在运行：再双击一次 start.command，"
-                "或执行: lsof -tiTCP:18767 | xargs kill"
+                f"无法监听 {HOST}:{self.port}（{exc}）。通常是旧助手还在运行：{hint}"
             ) from exc
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()
