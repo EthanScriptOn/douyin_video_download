@@ -198,12 +198,21 @@ def open_downloads_dir() -> Path:
 
 def free_port(port: int = DEFAULT_PORT) -> None:
     """Best-effort: kill whatever is already listening on the helper port."""
+    try:
+        _free_port_impl(port)
+    except Exception as exc:  # pragma: no cover
+        print(f"[warn] free_port skipped: {exc}", flush=True)
+
+
+def _free_port_impl(port: int) -> None:
     if sys.platform == "darwin" or sys.platform.startswith("linux"):
         try:
             out = subprocess.check_output(
                 ["lsof", f"-tiTCP:{port}", "-sTCP:LISTEN"],
                 text=True,
                 stderr=subprocess.DEVNULL,
+                encoding="utf-8",
+                errors="replace",
             )
         except (subprocess.CalledProcessError, FileNotFoundError):
             return
@@ -214,11 +223,15 @@ def free_port(port: int = DEFAULT_PORT) -> None:
         return
 
     if sys.platform == "win32":
+        # Chinese Windows netstat is often GBK/CP936 — never assume UTF-8.
         try:
-            out = subprocess.check_output(["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL)
+            raw = subprocess.check_output(["netstat", "-ano"], stderr=subprocess.DEVNULL)
         except (subprocess.CalledProcessError, FileNotFoundError):
             return
-        # Match "127.0.0.1:18767" / "0.0.0.0:18767" / "[::]:18767", not 187670.
+        out = raw.decode("utf-8", errors="replace")
+        if "LISTENING" not in out.upper():
+            # Retry with system OEM code page guess.
+            out = raw.decode("gbk", errors="replace")
         pat = re.compile(rf"[:\]]{port}\s")
         pids: set[str] = set()
         for line in out.splitlines():

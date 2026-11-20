@@ -45,7 +45,7 @@ async function refresh() {
     chrome.action.setBadgeText({ text: ready > 0 ? String(ready) : "" });
     chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
     document.getElementById("meta").textContent =
-      `v0.3.1 · 视频 ${stats.total || 0} · 双轨齐全 ${stats.complete || 0} · 可推 ${ready} · 已推 ${stats.done || 0}` +
+      `v0.3.2 · 视频 ${stats.total || 0} · 双轨齐全 ${stats.complete || 0} · 可推 ${ready} · 已推 ${stats.done || 0}` +
       (state.helper ? ` · ${state.helper}` : "");
 
     const list = document.getElementById("list");
@@ -53,7 +53,7 @@ async function refresh() {
     const videos = state.videos || [];
     if (!videos.length) {
       list.innerHTML =
-        `<div class="empty">还没有拦截到。先启动 macOS 助手，再播放带 modal_id 的抖音视频。</div>`;
+        `<div class="empty">还没有拦截到。先启动本机助手（.exe / .app），再播放带 modal_id 的抖音视频。</div>`;
       return;
     }
 

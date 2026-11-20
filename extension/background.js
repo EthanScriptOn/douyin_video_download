@@ -253,7 +253,11 @@ async function pushVideo(videoId, { force = false } = {}) {
     return { ok: false, status: resp.status, error: item.pushError, videoId };
   } catch (err) {
     item.pushStatus = "error";
-    item.pushError = String(err);
+    const raw = String(err && err.message ? err.message : err);
+    item.pushError =
+      /Failed to fetch|NetworkError|Load failed/i.test(raw)
+        ? `连不上本机助手 ${LOCAL_BASE}（请先双击 DouyinMediaHelper.exe / .app，保持窗口运行）。原始错误: ${raw}`
+        : raw;
     persist();
     return { ok: false, error: item.pushError, videoId };
   }

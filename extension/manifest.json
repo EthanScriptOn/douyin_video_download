@@ -1,9 +1,14 @@
 {
   "manifest_version": 3,
   "name": "抖音媒体拦截",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "按视频拦截抖音 Web 的 media-video / media-audio，并推送到本机助手拼接。",
-  "permissions": ["webRequest", "storage", "tabs", "clipboardWrite"],
+  "permissions": [
+    "webRequest",
+    "storage",
+    "tabs",
+    "clipboardWrite"
+  ],
   "host_permissions": [
     "*://*.douyin.com/*",
     "*://*.douyinvod.com/*",
